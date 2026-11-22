@@ -65,6 +65,8 @@ input,select{font:16px Georgia,serif;padding:10px;border:2px solid var(--line);b
 .foot{display:flex;justify-content:space-between;gap:8px}.foot button{min-height:40px;font-size:14px}
 .help{font-size:14px;color:var(--mute)}.help b{color:var(--ink)}
 </style>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
 </head>
 <body>
 <main>
@@ -199,5 +201,6 @@ setInterval(tick,1000);
 render();if(LN&&S.remOn)sync();
 })();
 </script>
+<script>if("serviceWorker" in navigator&&location.protocol.indexOf("http")===0){window.addEventListener("load",function(){navigator.serviceWorker.register("sw.js").catch(function(){})})}</script>
 </body>
 </html>
