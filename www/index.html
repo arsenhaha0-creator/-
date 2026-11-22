@@ -64,6 +64,7 @@ input,select{font:16px Georgia,serif;padding:10px;border:2px solid var(--line);b
 .xl{display:flex;align-items:center;gap:8px;margin-top:10px}.xl input{width:90px}
 .foot{display:flex;justify-content:space-between;gap:8px}.foot button{min-height:40px;font-size:14px}
 .help{font-size:14px;color:var(--mute)}.help b{color:var(--ink)}
+body.gate main>*:not(h1):not(#acc){display:none!important}
 </style>
 <link rel="manifest" href="manifest.json">
 <script src="config.js"></script>
@@ -196,20 +197,28 @@ function authGo(kind){
   }).catch(function(){cerr="Нет связи с сервером.";cst="";abusy=false;drawAcc()});
 }
 function signOut(){
-  var t=AU&&AU.at,p=cdirty?push().catch(function(){}):Promise.resolve();
-  p.then(function(){if(t&&cloudOn())sb("/auth/v1/logout","POST",null,t).catch(function(){});forget();cdirty=false;cst="";cerr="";drawAcc()});
+  var t=AU&&AU.at,p=cdirty?push().then(function(){return true},function(){return false}):Promise.resolve(true);
+  p.then(function(ok){
+    if(!ok&&!confirm("Не удалось сохранить последние изменения в облако. Выйти и потерять их?"))return;
+    if(t&&cloudOn())sb("/auth/v1/logout","POST",null,t).catch(function(){});
+    forget();cdirty=false;cst="";cerr="";
+    S=fresh();try{localStorage.removeItem(KEY)}catch(e){}
+    render();drawAcc();
+  });
 }
 function drawAcc(){
   var c=document.getElementById("acc");if(!c)return;
   if(!cloudOn()){c.style.display="none";return}
   var em=document.getElementById("ae");if(em)aemail=em.value;
+  document.body.classList.toggle("gate",!AU);
+  c.querySelector("h2").textContent=AU?"Аккаунт":"Регистрация и вход";
   var h;
   if(AU){
     h='<div class="mute">Вы вошли: <b>'+esc(AU.email||"")+'</b></div>'
      +'<div class="mute">'+esc(cerr||cst||"Прогресс сохраняется в облаке автоматически.")+'</div>'
      +'<div class="row" style="margin-top:8px"><button class="alt" data-cl="sync" style="flex:1">Обновить из облака</button><button class="alt" data-cl="out" style="flex:1">Выйти</button></div>';
   }else{
-    h='<div class="mute">Войдите, чтобы прогресс сохранялся в облаке и был на любом устройстве.</div>'
+    h='<div class="mute">Создайте аккаунт или войдите, чтобы начать. Прогресс будет сохраняться в облаке и будет на любом устройстве.</div>'
      +'<div class="row" style="margin-top:8px"><input id="ae" type="email" autocomplete="email" inputmode="email" autocapitalize="none" placeholder="Email" value="'+esc(aemail)+'"></div>'
      +'<div class="row"><input id="ap" type="password" autocomplete="current-password" placeholder="Пароль (от 6 символов)"></div>'
      +(cerr?'<p class="msg">'+esc(cerr)+'</p>':(cst?'<div class="mute">'+esc(cst)+'</div>':''))
