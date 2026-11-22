@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Карта жизни">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0a0a">
+<title>Карта жизни</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&amp;display=swap">
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#0b0a0a;--card:#151312;--ink:#e7dec9;--mute:#a09580;--line:#4a403a;--blood:#a8161f;--hot:#e5434a;--hatch:rgba(231,222,201,.05);--on:#f3e9d2;color-scheme:dark}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#d6cbb0;--card:#e4dac1;--ink:#14100d;--mute:#5b5040;--line:#2a221b;--blood:#9c1620;--hot:#9c1620;--hatch:rgba(20,16,13,.08);color-scheme:light}}
+:root[data-theme="light"]{--bg:#d6cbb0;--card:#e4dac1;--ink:#14100d;--mute:#5b5040;--line:#2a221b;--blood:#9c1620;--hot:#9c1620;--hatch:rgba(20,16,13,.08);color-scheme:light}
+:root[data-theme="dark"]{--bg:#0b0a0a;--card:#151312;--ink:#e7dec9;--mute:#a09580;--line:#4a403a;--blood:#a8161f;--hot:#e5434a;--hatch:rgba(231,222,201,.05);color-scheme:dark}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 Georgia,"Times New Roman",serif}
+main{max-width:520px;margin:0 auto;padding:16px 14px 30px}
+h1,h2,.rank,.pn,.plate b,.pl-l{font-family:Oswald,"Arial Narrow",Impact,sans-serif;font-weight:700}
+h1{font-size:36px;line-height:1;margin:6px 0 16px;letter-spacing:.02em;display:inline-block;border-bottom:5px solid var(--blood);padding-bottom:4px}
+h2{font-size:21px;margin:0 0 10px;letter-spacing:.02em}
+.card{background:var(--card) repeating-linear-gradient(135deg,var(--hatch) 0 1px,transparent 1px 6px);border:2px solid var(--line);box-shadow:5px 5px 0 #000;padding:14px;margin-bottom:18px}
+#hero{border-color:var(--ink);box-shadow:5px 5px 0 var(--blood)}
+.heroin{display:flex;gap:14px;align-items:center}
+.plate{flex:none;width:86px;height:86px;border:3px solid var(--ink);background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center}
+.plate b{font-size:46px;line-height:1;color:var(--hot)}.plate span{font-size:12px;color:var(--mute)}
+.grow{flex:1;min-width:0}.rank{font-size:24px;line-height:1.1}
+.mute{color:var(--mute);font-size:14px}
+.bar{position:relative;height:14px;border:2px solid var(--line);background:var(--bg);margin:7px 0 5px}
+.bar i{display:block;height:100%;background:var(--a,var(--blood));transition:width .5s}
+.bar::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,transparent 0 calc(10% - 2px),var(--bg) calc(10% - 2px) 10%)}
+.ladder{display:flex;gap:3px;margin-top:12px}
+.st{flex:1;height:26px;border:2px solid var(--line);font:500 11px/22px Oswald,sans-serif;text-align:center;color:var(--mute)}
+.st.on{background:var(--blood);color:var(--on);border-color:var(--blood)}.st.cur{border-color:var(--ink)}
+.msg{color:var(--hot);font-weight:700;min-height:1.5em;margin:0 0 14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:14px}
+.pl{position:relative;background:var(--bg);border:2px solid var(--line);border-left:7px solid var(--a);padding:8px 10px 8px;cursor:pointer;outline:none}
+.pl.on{border-color:var(--ink);border-left-color:var(--a);box-shadow:4px 4px 0 var(--a)}
+.pl:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.pt{display:flex;justify-content:space-between;gap:4px;align-items:flex-start}
+.pn{font-size:17px;line-height:1.15;overflow-wrap:anywhere}
+.pb{flex:none;display:flex}
+.mini{background:transparent;color:var(--mute);border:0;box-shadow:none;min-height:32px;min-width:30px;padding:0;font-size:15px}
+.pl-l{font-size:40px;line-height:1.1;color:var(--a)}
+button{font:700 16px Oswald,Arial,sans-serif;letter-spacing:.03em;border:2px solid #000;background:var(--blood);color:var(--on);padding:10px 16px;min-height:46px;cursor:pointer;box-shadow:3px 3px 0 #000}
+button:active{transform:translate(2px,2px);box-shadow:1px 1px 0 #000}
+button.alt{background:transparent;color:var(--ink);border-color:var(--line);box-shadow:none;font-weight:500}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--hot);outline-offset:2px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.chip{min-height:40px;padding:6px 12px;font-size:15px;font-weight:500;background:transparent;color:var(--ink);border:2px solid var(--line);box-shadow:none}
+.chip.on{background:var(--blood);color:var(--on);border-color:var(--ink)}
+.quick{display:flex;gap:6px;margin-top:10px}.quick button{flex:1;padding:6px;min-height:42px}
+.timer{font:700 40px Oswald,sans-serif;margin:2px 0}
+.row{display:flex;gap:8px;margin-bottom:8px}
+input,select{font:16px Georgia,serif;padding:10px;border:2px solid var(--line);border-radius:0;background:var(--bg);color:var(--ink);min-height:44px;width:100%;min-width:0}
+.goal{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:2px solid var(--line)}
+.goal .t{flex:1;min-width:0;overflow-wrap:anywhere}.goal.d .t{text-decoration:line-through;color:var(--mute)}
+.ck{flex:none;width:38px;height:38px;min-height:38px;padding:0;background:transparent;color:var(--on);border:2px solid var(--ink);box-shadow:none}
+.goal.d .ck{background:var(--blood)}
+.xl{display:flex;align-items:center;gap:8px;margin-top:10px}.xl input{width:90px}
+.foot{display:flex;justify-content:space-between;gap:8px}.foot button{min-height:40px;font-size:14px}
+.help{font-size:14px;color:var(--mute)}.help b{color:var(--ink)}
+</style>
+</head>
+<body>
+<main>
+<h1>Карта жизни</h1>
+<section class="card" id="hero" aria-live="polite"></section>
+<p class="msg" id="msg" aria-live="polite"></p>
+<section class="card">
+<h2>Сферы жизни</h2>
+<div class="grid" id="plaques"></div>
+<div class="row"><input id="rn" maxlength="30" placeholder="Новая сфера, например: Работа"><button data-act="addreg" style="flex:none">Добавить</button></div>
+</section>
+<section class="card" id="timer"></section>
+<section class="card">
+<h2>Мои цели</h2>
+<div class="row"><input id="gt" maxlength="80" placeholder="Цель, например: выучить 20 слов"></div>
+<div class="row"><select id="gr" aria-label="Сфера"></select><input id="gx" type="number" inputmode="numeric" min="1" step="1" value="25" aria-label="XP за выполнение" style="width:110px;flex:none"></div>
+<button data-act="addgoal" style="width:100%">Добавить цель</button>
+<div id="glist" style="margin-top:8px"></div>
+</section>
+<section class="card" id="remc"><h2>Напоминания</h2><div class="mute" id="rst"></div><div id="rlist"></div><div class="row" style="margin-top:8px"><input id="rtm" type="time" value="09:00" style="width:120px;flex:none" aria-label="Время"><input id="rtx" maxlength="80" placeholder="Текст напоминания"></div><button data-act="addrem" style="width:100%">Добавить напоминание</button><button data-act="remon" id="ron" style="width:100%;margin-top:8px"></button></section>
+<div class="foot"><button class="alt" data-act="theme">Тема</button><button class="alt" data-act="reset">Начать заново</button></div>
+</main>
+<script>
+(function(){
+var KEY="lifemap_v3",MAXL=40,MAXR=50;
+var ACC=["#c2272d","#c27a2b","#8fa1b3","#d2c28f","#9b4a58","#6f9482"];
+var TIT=["Бродяга","Оруженосец","Наёмник","Клинок","Ветеран","Закалённый","Рубака","Полководец","Железный","Неумолимый","Чемпион","Неукротимый"];
+var SEED=[["Прогулка 20 минут","h",10],["Записать траты за день","m",10],["Один урок или статья","s",25],["Написать близкому человеку","r",10]];
+function fresh(){return{regs:[{id:"h",n:"Здоровье",x:0},{id:"m",n:"Деньги",x:0},{id:"s",n:"Учёба",x:0},{id:"r",n:"Отношения",x:0}],goals:SEED.map(function(g,i){return{id:"s"+i,t:g[0],r:g[1],x:g[2],d:0}}),timer:null,reg:"h",pm:2,bank:0,rem:[{id:1001,h:9,m:0,t:"Сделай это сегодня или умри бедным"},{id:1002,h:20,m:0,t:"День на исходе. Закрой цели или умри бедным"}],remOn:false}}
+var S=fresh(),msg="",rmsg="",LN=null;
+try{if(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform())LN=window.Capacitor.registerPlugin("LocalNotifications")}catch(e){}
+try{var raw=localStorage.getItem(KEY);
+if(raw)S=Object.assign(S,JSON.parse(raw));
+else{var o=localStorage.getItem("lifemap_v2");if(o){o=JSON.parse(o);S.regs.forEach(function(r){r.x=(o.xp&&o.xp[r.id])||0});S.goals=(o.goals||[]).map(function(g){return{id:g.id,t:g.t,r:g.r,x:g.x,d:g.d}});S.timer=o.timer||null}}}catch(e){}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function reg(id){return S.regs.filter(function(r){return r.id===id})[0]}
+function total(){return S.bank+S.regs.reduce(function(a,r){return a+r.x},0)}
+function lvl(x){var L=1;while(L<MAXL&&x>=25*(L+1)*L)L++;return L}
+function rlv(x){var L=1;while(L<MAXR&&x>=20*(L+1)*L)L++;return L}
+function tier(L){return Math.min(Math.floor((L-1)/3),TIT.length-1)}
+function bonus(L){return Math.floor(L/5)*5}
+function num(v){v=parseFloat(String(v).replace(",","."));return isFinite(v)&&v>0?v:0}
+function award(rid,base,why){
+  var r=reg(rid);if(!r)return;
+  var b=lvl(total()),v=Math.round(base*(1+bonus(b)/100));if(v<1&&base>0)v=1;
+  var rb=rlv(r.x);r.x+=v;var a=lvl(total());
+  msg="+"+v+" XP ("+why+")";
+  if(rlv(r.x)>rb)msg+=" · «"+r.n+"»: уровень "+rlv(r.x);
+  if(a>b)msg+=" · Новый уровень "+a+"!";
+  if(tier(a)>tier(b))msg+=" Новый ранг: "+TIT[tier(a)]+".";
+  save();render();
+}
+function drawHero(){
+  var x=total(),L=lvl(x),t=tier(L),lo=25*L*(L-1),hi=25*(L+1)*L,full=L>=MAXL;
+  var nf=t<TIT.length-1?"Следующий ранг на уровне "+(3*(t+1)+1):"Высший ранг";
+  var lad=TIT.map(function(n,i){return'<span class="st'+(i<=t?" on":"")+(i===t?" cur":"")+'" title="'+n+' · с уровня '+(3*i+1)+'">'+(3*i+1)+'</span>'}).join("");
+  document.getElementById("hero").innerHTML='<div class="heroin"><div class="plate"><span>Ур.</span><b>'+L+'</b></div><div class="grow"><div class="rank">'+TIT[t]+'</div><div class="bar"><i style="width:'+(full?100:(x-lo)/(hi-lo)*100)+'%"></i></div><div class="mute">'+x+' XP'+(full?"":" · до уровня "+(L+1)+": "+(hi-x))+'</div><div class="mute">Бонус к опыту +'+bonus(L)+'% · '+nf+'</div></div></div><div class="ladder">'+lad+'</div>';
+  document.getElementById("msg").textContent=msg;
+}
+function drawPlaques(){
+  document.getElementById("plaques").innerHTML=S.regs.map(function(r,i){
+    var L=rlv(r.x),lo=20*L*(L-1),hi=20*(L+1)*L,sel=S.reg===r.id;
+    return'<div class="pl'+(sel?" on":"")+'" style="--a:'+ACC[i%ACC.length]+'" data-act="reg" data-id="'+r.id+'" tabindex="0" role="button" aria-pressed="'+sel+'"><div class="pt"><span class="pn">'+esc(r.n)+'</span><span class="pb"><button class="mini" data-act="ren" data-id="'+r.id+'" aria-label="Переименовать">✎</button><button class="mini" data-act="delreg" data-id="'+r.id+'" aria-label="Удалить сферу">✕</button></span></div><div class="pl-l">'+L+'</div><div class="bar"><i style="width:'+(L>=MAXR?100:(r.x-lo)/(hi-lo)*100)+'%"></i></div><div class="mute">'+r.x+' XP</div></div>';
+  }).join("");
+}
+function drawTimer(){
+  var r=reg(S.reg),h='<h2>Время = опыт</h2><div class="chips">'+S.regs.map(function(g){return'<button class="chip'+(S.reg===g.id?" on":"")+'" data-act="reg" data-id="'+g.id+'">'+esc(g.n)+'</button>'}).join("")+'</div>';
+  if(S.timer){var tr=reg(S.timer.r)||r;h+='<div class="mute">Идёт занятие: '+esc(tr.n)+'</div><div class="timer" id="tt">00:00</div><div class="mute" id="tx"></div><div class="row" style="margin-top:10px"><button data-act="stop" style="flex:1">Остановить и забрать опыт</button><button class="alt" data-act="cancel">Отмена</button></div>'}
+  else h+='<button data-act="start" style="width:100%">Начать занятие: '+esc(r.n)+'</button><div class="quick"><button class="alt" data-act="add" data-m="5">+5</button><button class="alt" data-act="add" data-m="15">+15</button><button class="alt" data-act="add" data-m="30">+30</button><button class="alt" data-act="add" data-m="60">+60</button></div>';
+  h+='<label class="xl">XP за каждые 5 минут <input id="pm" type="number" inputmode="decimal" min="0" step="any" value="'+S.pm+'"></label>';
+  document.getElementById("timer").innerHTML=h;tick();
+}
+function drawGoals(){
+  var gs=S.goals.slice().sort(function(a,b){return a.d-b.d});
+  document.getElementById("glist").innerHTML=gs.length?gs.map(function(g){var r=reg(g.r)||{n:"—"};return'<div class="goal'+(g.d?" d":"")+'"><button class="ck" data-act="done" data-id="'+g.id+'" aria-label="Отметить выполненной">'+(g.d?"✓":"")+'</button><div class="t">'+esc(g.t)+'<div class="mute">'+esc(r.n)+' · +'+g.x+' XP</div></div><button class="mini" data-act="editg" data-id="'+g.id+'" aria-label="Изменить цель">✎</button><button class="mini" data-act="del" data-id="'+g.id+'" aria-label="Удалить цель">✕</button></div>'}).join(""):'<p class="mute">Целей пока нет. Добавьте первую выше.</p>';
+}
+function tick(){
+  var el=document.getElementById("tt");if(!el||!S.timer)return;
+  var sec=Math.floor((Date.now()-S.timer.s)/1000),m=Math.floor(sec/60);
+  el.textContent=("0"+m).slice(-2)+":"+("0"+sec%60).slice(-2);
+  document.getElementById("tx").textContent="Будет начислено: "+Math.floor(m/5)*S.pm+" XP (до бонуса)";
+}
+function pad(n){return("0"+n).slice(-2)}
+function drawRem(){
+  document.getElementById("rlist").innerHTML=S.rem.length?S.rem.map(function(r){return'<div class="goal"><div class="t"><b class="pn">'+pad(r.h)+':'+pad(r.m)+'</b> '+esc(r.t)+'</div><button class="mini" data-act="delrem" data-id="'+r.id+'" aria-label="Удалить напоминание">✕</button></div>'}).join(""):'<p class="mute">Напоминаний нет.</p>';
+  document.getElementById("ron").textContent=S.remOn?"Выключить уведомления":"Включить уведомления";
+  document.getElementById("rst").textContent=rmsg||(LN?(S.remOn?"Уведомления включены: приходят каждый день в указанное время.":"Уведомления выключены."):"Уведомления работают в установленном приложении, в браузере их нет.");
+}
+async function sync(){
+  if(!LN)return;
+  try{
+    var pend=await LN.getPending();
+    if(pend.notifications.length)await LN.cancel({notifications:pend.notifications.map(function(n){return{id:n.id}})});
+    if(!S.remOn||!S.rem.length){rmsg="";drawRem();return}
+    var p=await LN.requestPermissions();
+    if(p.display!=="granted"){S.remOn=false;save();rmsg="Разрешите уведомления: Настройки iPhone → Карта жизни → Уведомления.";drawRem();return}
+    await LN.schedule({notifications:S.rem.map(function(r){return{id:r.id,title:"Карта жизни",body:r.t,schedule:{on:{hour:r.h,minute:r.m},allowWhileIdle:true}}})});
+    rmsg="";drawRem();
+  }catch(e){rmsg="Ошибка уведомлений: "+(e&&e.message||e);drawRem()}
+}
+function render(){
+  if(!reg(S.reg))S.reg=S.regs[0].id;
+  drawHero();drawPlaques();drawTimer();drawGoals();drawRem();
+  var gr=document.getElementById("gr");gr.innerHTML=S.regs.map(function(r){return'<option value="'+r.id+'">'+esc(r.n)+'</option>'}).join("");gr.value=S.reg;
+}
+function say(t){msg=t;drawHero()}
+function act(a,b){
+  var id=b.getAttribute("data-id"),r,g;
+  if(a==="reg"){S.reg=id;save();render()}
+  else if(a==="start"){S.timer={s:Date.now(),r:S.reg};msg="";save();render()}
+  else if(a==="cancel"){S.timer=null;msg="";save();render()}
+  else if(a==="stop"){var m=Math.floor((Date.now()-S.timer.s)/60000),rid=S.timer.r;S.timer=null;if(m>=5&&S.pm>0)award(rid,Math.floor(m/5)*S.pm,m+" мин");else{msg="Меньше 5 минут: опыт не начислен.";save();render()}}
+  else if(a==="add"){var mm=+b.getAttribute("data-m");award(S.reg,mm/5*S.pm,"+"+mm+" мин")}
+  else if(a==="addreg"){var i=document.getElementById("rn"),n=i.value.trim();if(!n){say("Введите название сферы.");return}r={id:"r"+Date.now(),n:n,x:0};S.regs.push(r);S.reg=r.id;i.value="";msg="Сфера добавлена.";save();render()}
+  else if(a==="ren"){r=reg(id);var nn=prompt("Новое название сферы",r.n);if(nn&&nn.trim()){r.n=nn.trim().slice(0,30);save();render()}}
+  else if(a==="delreg"){r=reg(id);if(S.regs.length<=1){say("Нужна хотя бы одна сфера.");return}if(confirm("Удалить сферу «"+r.n+"» и её цели? Накопленный опыт останется в общем рейтинге.")){S.bank+=r.x;S.regs=S.regs.filter(function(x){return x.id!==id});S.goals=S.goals.filter(function(x){return x.r!==id});if(S.timer&&S.timer.r===id)S.timer=null;msg="";save();render()}}
+  else if(a==="addgoal"){var gt=document.getElementById("gt"),t=gt.value.trim(),x=num(document.getElementById("gx").value);if(!t){say("Введите название цели.");return}if(!x){say("Укажите XP больше нуля.");return}S.goals.push({id:"g"+Date.now(),t:t,r:document.getElementById("gr").value,x:x,d:0});gt.value="";msg="Цель добавлена.";save();render()}
+  else if(a==="done"){g=S.goals.filter(function(x){return x.id===id})[0];if(g&&!g.d){g.d=1;award(g.r,g.x,"цель выполнена")}}
+  else if(a==="editg"){g=S.goals.filter(function(x){return x.id===id})[0];var t2=prompt("Название цели",g.t);if(t2===null)return;var x2=prompt("XP за выполнение",g.x);if(x2===null)return;if(t2.trim())g.t=t2.trim().slice(0,80);if(num(x2))g.x=num(x2);save();drawGoals()}
+  else if(a==="del"){S.goals=S.goals.filter(function(x){return x.id!==id});save();drawGoals()}
+  else if(a==="addrem"){var tm=(document.getElementById("rtm").value||"09:00").split(":"),tx=document.getElementById("rtx").value.trim()||"Сделай это сегодня или умри бедным";S.rem.push({id:(Date.now()%2000000000)+Math.floor(Math.random()*1000),h:+tm[0],m:+tm[1],t:tx.slice(0,80)});S.rem.sort(function(a,b){return a.h*60+a.m-(b.h*60+b.m)});document.getElementById("rtx").value="";save();render();sync()}
+  else if(a==="delrem"){S.rem=S.rem.filter(function(x){return String(x.id)!==id});save();render();sync()}
+  else if(a==="remon"){if(!LN){rmsg="Работает только в установленном приложении.";drawRem();return}S.remOn=!S.remOn;save();render();sync()}
+  else if(a==="theme"){var d=document.documentElement,c=d.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark");d.setAttribute("data-theme",c==="dark"?"light":"dark")}
+  else if(a==="reset"){if(confirm("Стереть весь прогресс, сферы и цели?")){S=fresh();msg="";save();render()}}
+}
+document.addEventListener("click",function(e){var b=e.target.closest("[data-act]");if(b)act(b.getAttribute("data-act"),b)});
+document.addEventListener("keydown",function(e){if((e.key==="Enter"||e.key===" ")&&e.target.classList&&e.target.classList.contains("pl")){e.preventDefault();act("reg",e.target)}});
+document.addEventListener("change",function(e){if(e.target.id==="pm"){var v=parseFloat(String(e.target.value).replace(",","."));S.pm=isFinite(v)&&v>=0?v:2;e.target.value=S.pm;save()}});
+setInterval(tick,1000);
+render();if(LN&&S.remOn)sync();
+})();
+</script>
+</body>
+</html>

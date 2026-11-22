@@ -1,0 +1,6 @@
+{
+  "appId": "com.lifemap.karta",
+  "appName": "Карта жизни",
+  "webDir": "www",
+  "ios": { "contentInset": "never" }
+}
