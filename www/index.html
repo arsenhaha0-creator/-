@@ -66,6 +66,7 @@ input,select{font:16px Georgia,serif;padding:10px;border:2px solid var(--line);b
 .help{font-size:14px;color:var(--mute)}.help b{color:var(--ink)}
 </style>
 <link rel="manifest" href="manifest.json">
+<script src="config.js"></script>
 <link rel="apple-touch-icon" href="icon-180.png">
 </head>
 <body>
@@ -87,6 +88,7 @@ input,select{font:16px Georgia,serif;padding:10px;border:2px solid var(--line);b
 <div id="glist" style="margin-top:8px"></div>
 </section>
 <section class="card" id="remc"><h2>Напоминания</h2><div class="mute" id="rst"></div><div id="rlist"></div><div class="row" style="margin-top:8px"><input id="rtm" type="time" value="09:00" style="width:120px;flex:none" aria-label="Время"><input id="rtx" maxlength="80" placeholder="Текст напоминания"></div><button data-act="addrem" style="width:100%">Добавить напоминание</button><button data-act="remon" id="ron" style="width:100%;margin-top:8px"></button></section>
+<section class="card" id="acc"><h2>Аккаунт</h2><div id="accbody"></div></section>
 <div class="foot"><button class="alt" data-act="theme">Тема</button><button class="alt" data-act="reset">Начать заново</button></div>
 </main>
 <script>
@@ -101,7 +103,126 @@ try{if(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isN
 try{var raw=localStorage.getItem(KEY);
 if(raw)S=Object.assign(S,JSON.parse(raw));
 else{var o=localStorage.getItem("lifemap_v2");if(o){o=JSON.parse(o);S.regs.forEach(function(r){r.x=(o.xp&&o.xp[r.id])||0});S.goals=(o.goals||[]).map(function(g){return{id:g.id,t:g.t,r:g.r,x:g.x,d:g.d}});S.timer=o.timer||null}}}catch(e){}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+function save(){S.ts=Date.now();try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}cloudQueue()}
+/* ---- облако (Supabase): вход по email и паролю, прогресс хранится в таблице progress ---- */
+var CFG=window.KZ_CONFIG||{},AK="lifemap_auth",AU=null,cst="",cerr="",cbusy=false,cdirty=false,ctimer=null,aemail="",abusy=false;
+try{AU=JSON.parse(localStorage.getItem(AK)||"null")}catch(e){}
+function cloudOn(){return !!(CFG.url&&CFG.key)}
+function p2(n){return(n<10?"0":"")+n}
+function hhmm(){var d=new Date();return p2(d.getHours())+":"+p2(d.getMinutes())}
+function sb(path,method,body,tok,extra){
+  var h={"apikey":CFG.key,"Content-Type":"application/json"};
+  if(tok)h.Authorization="Bearer "+tok;
+  if(extra)for(var k in extra)h[k]=extra[k];
+  return fetch(CFG.url+path,{method:method,headers:h,body:body?JSON.stringify(body):undefined});
+}
+function errText(j,st){
+  var m=(j&&(j.msg||j.error_description||j.message||j.error))||"";
+  if(/already registered/i.test(m))return "Этот email уже зарегистрирован. Нажмите «Войти».";
+  if(/invalid login/i.test(m))return "Неверный email или пароль.";
+  if(/not confirmed/i.test(m))return "Подтвердите email по письму, потом войдите.";
+  if(/rate limit|too many/i.test(m)||st===429)return "Слишком много попыток. Подождите минуту.";
+  if(/password/i.test(m))return "Пароль слишком простой. Минимум 6 символов.";
+  if(/email/i.test(m))return "Проверьте адрес email.";
+  return "Ошибка: "+(m||st);
+}
+function setAuth(j){
+  AU={at:j.access_token,rt:j.refresh_token,exp:Date.now()+((j.expires_in||3600)-60)*1000,
+    uid:(j.user&&j.user.id)||(AU&&AU.uid),email:(j.user&&j.user.email)||(AU&&AU.email)};
+  try{localStorage.setItem(AK,JSON.stringify(AU))}catch(e){}
+}
+function forget(){AU=null;try{localStorage.removeItem(AK)}catch(e){}}
+function token(){
+  if(!AU)return Promise.reject(new Error("noauth"));
+  if(Date.now()<AU.exp)return Promise.resolve(AU.at);
+  return sb("/auth/v1/token?grant_type=refresh_token","POST",{refresh_token:AU.rt}).then(function(r){
+    return r.json().then(function(j){
+      if(!r.ok){if(r.status>=400&&r.status<500){forget();cerr="Сессия истекла, войдите снова."}throw new Error("refresh")}
+      setAuth(j);return AU.at});
+  });
+}
+function pull(){
+  return token().then(function(t){return sb("/rest/v1/progress?select=data,updated_ts&user_id=eq."+AU.uid,"GET",null,t)})
+    .then(function(r){if(!r.ok)throw new Error("pull");return r.json()}).then(function(a){return a&&a[0]||null});
+}
+function push(){
+  var d=JSON.parse(JSON.stringify(S));delete d.remOn;var ts=S.ts||Date.now();
+  return token().then(function(t){return sb("/rest/v1/progress?on_conflict=user_id","POST",{user_id:AU.uid,data:d,updated_ts:ts},t,{"Prefer":"resolution=merge-duplicates,return=minimal"})})
+    .then(function(r){if(!r.ok)throw new Error("push")});
+}
+function cloudQueue(){if(!AU||!cloudOn())return;cdirty=true;if(!ctimer)ctimer=setTimeout(flush,3000)}
+function flush(){
+  ctimer=null;if(!AU||!cdirty)return;
+  if(cbusy){ctimer=setTimeout(flush,2000);return}
+  cbusy=true;cdirty=false;
+  push().then(function(){cst="Сохранено в облаке · "+hhmm();cerr=""})
+    .catch(function(){cdirty=true;if(AU){cerr="Нет связи, сохраню позже.";if(!ctimer)ctimer=setTimeout(flush,15000)}})
+    .then(function(){cbusy=false;drawAcc()});
+}
+function applyRemote(d,ts){
+  var ro=S.remOn;S=Object.assign(fresh(),d);if(ro!==undefined)S.remOn=ro;S.ts=ts;
+  try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
+  render();if(LN&&S.remOn)sync();
+}
+function syncDown(ask){
+  if(!AU||!cloudOn()||cbusy||cdirty)return Promise.resolve();
+  cbusy=true;
+  return pull().then(function(row){
+    var lt=S.ts||0;
+    if(!row){return push().then(function(){cst="Сохранено в облаке · "+hhmm();cerr=""})}
+    var rt=+row.updated_ts||0;
+    if(ask&&lt){
+      if(confirm("В облаке уже есть прогресс этого аккаунта.\nОК: загрузить его на это устройство.\nОтмена: оставить прогресс с этого устройства и перезаписать облако.")){applyRemote(row.data,rt);cst="Загружено из облака · "+hhmm()}
+      else{return push().then(function(){cst="Сохранено в облаке · "+hhmm()})}
+    }else if(rt>lt){applyRemote(row.data,rt);cst="Загружено из облака · "+hhmm()}
+    else if(rt<lt){return push().then(function(){cst="Сохранено в облаке · "+hhmm()})}
+    else cst="Синхронизировано · "+hhmm();
+    cerr="";
+  }).catch(function(){if(AU)cerr="Нет связи с облаком."}).then(function(){cbusy=false;drawAcc()});
+}
+function authGo(kind){
+  if(abusy)return;
+  var e1=document.getElementById("ae"),e2=document.getElementById("ap");
+  var em=((e1&&e1.value)||"").trim(),pw=(e2&&e2.value)||"";aemail=em;
+  if(!/^\S+@\S+\.\S+$/.test(em)){cerr="Проверьте адрес email.";drawAcc();return}
+  if(pw.length<6){cerr="Пароль: минимум 6 символов.";drawAcc();return}
+  abusy=true;cerr="";cst=kind==="up"?"Регистрирую…":"Вхожу…";drawAcc();
+  var path=kind==="up"?"/auth/v1/signup":"/auth/v1/token?grant_type=password";
+  sb(path,"POST",{email:em,password:pw}).then(function(r){return r.json().then(function(j){return{ok:r.ok,st:r.status,j:j}})}).then(function(x){
+    if(!x.ok){cerr=errText(x.j,x.st);cst="";abusy=false;drawAcc();return}
+    if(!x.j.access_token){cst="";cerr="Письмо отправлено на "+em+". Подтвердите email и нажмите «Войти».";abusy=false;drawAcc();return}
+    setAuth(x.j);cerr="";cst="";abusy=false;drawAcc();
+    return syncDown(kind==="in");
+  }).catch(function(){cerr="Нет связи с сервером.";cst="";abusy=false;drawAcc()});
+}
+function signOut(){
+  var t=AU&&AU.at,p=cdirty?push().catch(function(){}):Promise.resolve();
+  p.then(function(){if(t&&cloudOn())sb("/auth/v1/logout","POST",null,t).catch(function(){});forget();cdirty=false;cst="";cerr="";drawAcc()});
+}
+function drawAcc(){
+  var c=document.getElementById("acc");if(!c)return;
+  if(!cloudOn()){c.style.display="none";return}
+  var em=document.getElementById("ae");if(em)aemail=em.value;
+  var h;
+  if(AU){
+    h='<div class="mute">Вы вошли: <b>'+esc(AU.email||"")+'</b></div>'
+     +'<div class="mute">'+esc(cerr||cst||"Прогресс сохраняется в облаке автоматически.")+'</div>'
+     +'<div class="row" style="margin-top:8px"><button class="alt" data-cl="sync" style="flex:1">Обновить из облака</button><button class="alt" data-cl="out" style="flex:1">Выйти</button></div>';
+  }else{
+    h='<div class="mute">Войдите, чтобы прогресс сохранялся в облаке и был на любом устройстве.</div>'
+     +'<div class="row" style="margin-top:8px"><input id="ae" type="email" autocomplete="email" inputmode="email" autocapitalize="none" placeholder="Email" value="'+esc(aemail)+'"></div>'
+     +'<div class="row"><input id="ap" type="password" autocomplete="current-password" placeholder="Пароль (от 6 символов)"></div>'
+     +(cerr?'<p class="msg">'+esc(cerr)+'</p>':(cst?'<div class="mute">'+esc(cst)+'</div>':''))
+     +'<div class="row"><button data-cl="in" style="flex:1">Войти</button><button class="alt" data-cl="up" style="flex:1">Регистрация</button></div>';
+  }
+  document.getElementById("accbody").innerHTML=h;
+}
+document.addEventListener("click",function(e){
+  var b=e.target.closest("[data-cl]");if(!b)return;var a=b.getAttribute("data-cl");
+  if(a==="in")authGo("in");else if(a==="up")authGo("up");else if(a==="out")signOut();
+  else if(a==="sync"){cst="Обновляю…";drawAcc();syncDown(false)}
+});
+document.addEventListener("visibilitychange",function(){if(!document.hidden&&AU)syncDown(false)});
 function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function reg(id){return S.regs.filter(function(r){return r.id===id})[0]}
 function total(){return S.bank+S.regs.reduce(function(a,r){return a+r.x},0)}
@@ -199,6 +320,7 @@ document.addEventListener("keydown",function(e){if((e.key==="Enter"||e.key===" "
 document.addEventListener("change",function(e){if(e.target.id==="pm"){var v=parseFloat(String(e.target.value).replace(",","."));S.pm=isFinite(v)&&v>=0?v:2;e.target.value=S.pm;save()}});
 setInterval(tick,1000);
 render();if(LN&&S.remOn)sync();
+drawAcc();if(AU&&cloudOn())syncDown(false);
 })();
 </script>
 <script>if("serviceWorker" in navigator&&location.protocol.indexOf("http")===0){window.addEventListener("load",function(){navigator.serviceWorker.register("sw.js").catch(function(){})})}</script>
