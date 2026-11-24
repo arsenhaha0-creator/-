@@ -1,0 +1,795 @@
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { X, Camera, AlertCircle, Loader2, Sparkles, RotateCcw, Lock } from 'lucide-react';
+import {
+  FaceLandmarker,
+  FilesetResolver,
+  type FaceLandmarkerResult,
+} from '@mediapipe/tasks-vision';
+import {
+  analyzeFace,
+  formatNorm,
+  formatValue,
+  pupilPair,
+  tierFor,
+  verdictFor,
+  weakestOf,
+  LOCKED_METRICS,
+  METRIC_KEYS,
+  METRICS,
+  SEVERITIES,
+  type MetricKey,
+  type MetricResult,
+  type Metrics,
+  type Point,
+  type Severity,
+} from '@/utils/faceAnalyzer';
+import { facePoseFromMatrix, type FacePose } from '@/utils/facePose';
+import {
+  visibleRect,
+  ovalFor,
+  checkFraming,
+  drawGuide,
+  drawCountdownArc,
+  type Framing,
+} from '@/utils/frameGuide';
+import { drawSnapshotOverlay } from '@/utils/drawOverlay';
+import { useProfile } from '@/hooks/useProfile';
+import { UnlockButton } from '@/components/UnlockButton';
+
+type State =
+  | 'idle'
+  | 'loading'
+  | 'running'
+  | 'analyzing'
+  | 'snapshot'
+  | 'permission-denied'
+  | 'no-camera'
+  | 'error';
+
+/** Пропорции окна превью — должны совпадать с классом aspect-[4/3] на контейнере. */
+const CONTAINER_ASPECT = 4 / 3;
+/** Поза дрожит на пару градусов каждый кадр; без задержки кнопка мигала бы. */
+const READY_DEBOUNCE_MS = 400;
+const COUNTDOWN_FROM = 3;
+/** Через столько безуспешных секунд даём снять как есть, чтобы никто не застрял. */
+const ESCAPE_AFTER_MS = 8000;
+
+type ShotQuality = { pose: FacePose | null; framing: Framing | null; forced: boolean };
+
+const FRAMING_HINTS: Record<NonNullable<Framing['reason']>, string> = {
+  far: 'Подойди ближе к камере',
+  near: 'Отодвинься немного',
+  'off-center': 'Помести лицо в овал',
+};
+
+const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm';
+const MODEL_URL =
+  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+
+type Props = { open: boolean; onClose: () => void };
+
+export function TryDemo({ open, onClose }: Props) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const videoLandmarkerRef = useRef<FaceLandmarker | null>(null);
+  const imageLandmarkerRef = useRef<FaceLandmarker | null>(null);
+  const filesetRef = useRef<Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>> | null>(null);
+  const rafRef = useRef<number>(0);
+  const lastVideoTimeRef = useRef(-1);
+
+  const { recordRating } = useProfile();
+
+  const [state, setState] = useState<State>('idle');
+  const [errorMsg, setErrorMsg] = useState<string>('');
+  const [faceDetected, setFaceDetected] = useState(false);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+  /** Примитивы, а не объекты: тик идёт каждый кадр, и React гасит setState с тем же значением. */
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [showEscape, setShowEscape] = useState(false);
+  const [shotQuality, setShotQuality] = useState<ShotQuality | null>(null);
+
+  const readySinceRef = useRef(0);
+  const notReadySinceRef = useRef(0);
+  const countdownStartRef = useRef(0);
+  /** Автоспуск живёт в тике, а takeSnapshot объявлен ниже — связываем через реф. */
+  const takeSnapshotRef = useRef<(forced: boolean) => void>(() => {});
+  const liveQualityRef = useRef<{ pose: FacePose | null; framing: Framing | null }>({
+    pose: null,
+    framing: null,
+  });
+
+  /**
+   * Рисует превью и решает, можно ли снимать. Возвращает true, когда отсчёт
+   * дошёл до нуля и пора спускать затвор — тик после этого не планирует
+   * новый кадр, иначе съёмка запустилась бы дважды.
+   */
+  const drawLiveLandmarks = useCallback((result: FaceLandmarkerResult): boolean => {
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return false;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return false;
+
+    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+    }
+
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    // Видео показывается с object-cover, то есть обрезано по краям. Прицел
+    // рисуем внутри видимой части, иначе он уедет за границу кадра.
+    const rect = visibleRect(w, h, CONTAINER_ASPECT);
+    const oval = ovalFor(rect);
+    const scale = Math.max(w, h) / 720;
+    const now = performance.now();
+
+    const faces = result.faceLandmarks;
+    setFaceDetected(faces.length > 0);
+
+    let framing: Framing | null = null;
+    let pose: FacePose | null = null;
+    let message: string | null = null;
+    let frameOk = false;
+
+    if (!faces.length) {
+      message = 'Лицо не найдено — встань ближе к свету';
+    } else {
+      const lm = faces[0] as Point[];
+      pose = facePoseFromMatrix(result.facialTransformationMatrixes?.[0]?.data);
+
+      // Превью зеркалится, поэтому и зрачки переводим в экранные координаты.
+      const pupils = pupilPair(lm);
+      framing = checkFraming(
+        {
+          r: { x: (1 - pupils.r.x) * w, y: pupils.r.y * h },
+          l: { x: (1 - pupils.l.x) * w, y: pupils.l.y * h },
+        },
+        rect,
+        oval,
+      );
+
+      // Порядок важен: пока человек стоит не на месте, говорить про поворот рано.
+      if (framing.reason) message = FRAMING_HINTS[framing.reason];
+      else if (pose?.hint) message = pose.hint;
+
+      // Наклон подбородка только подсказываем, съёмку по нему не запрещаем.
+      frameOk = framing.ok && !pose?.blocking;
+    }
+
+    liveQualityRef.current = { pose, framing };
+    setStatusMsg(message);
+
+    // Готовность должна устояться, иначе кнопка будет мигать на дрожании позы.
+    if (frameOk) {
+      if (!readySinceRef.current) readySinceRef.current = now;
+      notReadySinceRef.current = 0;
+    } else {
+      readySinceRef.current = 0;
+      if (!notReadySinceRef.current) notReadySinceRef.current = now;
+      if (now - notReadySinceRef.current > ESCAPE_AFTER_MS) setShowEscape(true);
+    }
+    const stableReady = readySinceRef.current > 0 && now - readySinceRef.current >= READY_DEBOUNCE_MS;
+    setReady(stableReady);
+
+    let fire = false;
+    let tick: number | null = null;
+    let progress = 0;
+    if (stableReady) {
+      if (!countdownStartRef.current) countdownStartRef.current = now;
+      const elapsed = now - countdownStartRef.current;
+      progress = elapsed / (COUNTDOWN_FROM * 1000);
+      const left = COUNTDOWN_FROM - Math.floor(elapsed / 1000);
+      if (left <= 0) {
+        countdownStartRef.current = 0;
+        fire = true;
+      } else {
+        tick = left;
+      }
+    } else {
+      countdownStartRef.current = 0;
+    }
+    setCountdown(tick);
+
+    if (faces.length) {
+      ctx.fillStyle = 'rgba(168, 85, 247, 0.85)';
+      for (const p of faces[0]) {
+        ctx.beginPath();
+        ctx.arc((1 - p.x) * w, p.y * h, 1.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    drawGuide(ctx, oval, stableReady, scale);
+    if (tick !== null) drawCountdownArc(ctx, oval, progress, scale);
+
+    return fire;
+  }, []);
+
+  const tick = useCallback(() => {
+    const video = videoRef.current;
+    const lm = videoLandmarkerRef.current;
+    if (!video || !lm) {
+      rafRef.current = requestAnimationFrame(tick);
+      return;
+    }
+    if (video.readyState >= 2 && video.currentTime !== lastVideoTimeRef.current) {
+      lastVideoTimeRef.current = video.currentTime;
+      try {
+        const result = lm.detectForVideo(video, performance.now());
+        // Затвор спускаем здесь: после него новый кадр не планируем, иначе
+        // съёмка запустится второй раз поверх уже идущей.
+        if (drawLiveLandmarks(result)) {
+          takeSnapshotRef.current(false);
+          return;
+        }
+      } catch {
+        // swallow per-frame errors
+      }
+    }
+    rafRef.current = requestAnimationFrame(tick);
+  }, [drawLiveLandmarks]);
+
+  const ensureFileset = useCallback(async () => {
+    if (!filesetRef.current) {
+      filesetRef.current = await FilesetResolver.forVisionTasks(WASM_URL);
+    }
+    return filesetRef.current;
+  }, []);
+
+  const ensureImageLandmarker = useCallback(async () => {
+    if (imageLandmarkerRef.current) return imageLandmarkerRef.current;
+    const fileset = await ensureFileset();
+    imageLandmarkerRef.current = await FaceLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+      runningMode: 'IMAGE',
+      numFaces: 1,
+      outputFacialTransformationMatrixes: true,
+    });
+    return imageLandmarkerRef.current;
+  }, [ensureFileset]);
+
+  const start = useCallback(async () => {
+    setState('loading');
+    setErrorMsg('');
+    setMetrics(null);
+
+    try {
+      if (!videoLandmarkerRef.current) {
+        const fileset = await ensureFileset();
+        videoLandmarkerRef.current = await FaceLandmarker.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+          runningMode: 'VIDEO',
+          numFaces: 1,
+          outputFaceBlendshapes: false,
+          outputFacialTransformationMatrixes: true,
+        });
+      }
+    } catch (e) {
+      console.error(e);
+      setErrorMsg('Не удалось загрузить модель. Проверь интернет.');
+      setState('error');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (!video) return;
+      video.srcObject = stream;
+      await video.play();
+      setState('running');
+      rafRef.current = requestAnimationFrame(tick);
+    } catch (e: unknown) {
+      const err = e as { name?: string };
+      if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') {
+        setState('permission-denied');
+      } else if (err?.name === 'NotFoundError' || err?.name === 'OverconstrainedError') {
+        setState('no-camera');
+      } else {
+        setErrorMsg('Не удалось включить камеру.');
+        setState('error');
+      }
+    }
+  }, [ensureFileset, tick]);
+
+  const stop = useCallback(() => {
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = 0;
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+      video.srcObject = null;
+    }
+  }, []);
+
+  const takeSnapshot = useCallback(async (forced = false) => {
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = 0;
+    countdownStartRef.current = 0;
+    setCountdown(null);
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    video.pause();
+    setState('analyzing');
+
+    try {
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+
+      const off = document.createElement('canvas');
+      off.width = w;
+      off.height = h;
+      const offCtx = off.getContext('2d');
+      if (!offCtx) throw new Error('canvas context');
+      offCtx.translate(w, 0);
+      offCtx.scale(-1, 1);
+      offCtx.drawImage(video, 0, 0, w, h);
+      offCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+      const landmarker = await ensureImageLandmarker();
+      const result = landmarker.detect(off);
+      if (!result.faceLandmarks.length) {
+        setErrorMsg('Лицо не найдено. Попробуй встать ближе к свету.');
+        setState('error');
+        return;
+      }
+      const lm = result.faceLandmarks[0] as Point[];
+      // Кадр не квадратный: x нормирован по ширине, y по высоте. Без w/h любые
+      // смешанные x-y замеры (FWHR, угол челюсти, наклон глаз) врут.
+      const m = analyzeFace(lm, w / h);
+      setMetrics(m);
+
+      // Качество снимка считаем по самому снимку, а не по последнему кадру
+      // превью: между ними человек мог шевельнуться.
+      const rect = visibleRect(w, h, CONTAINER_ASPECT);
+      const pupils = pupilPair(lm);
+      setShotQuality({
+        pose: facePoseFromMatrix(result.facialTransformationMatrixes?.[0]?.data),
+        framing: checkFraming(
+          {
+            r: { x: pupils.r.x * w, y: pupils.r.y * h },
+            l: { x: pupils.l.x * w, y: pupils.l.y * h },
+          },
+          rect,
+          ovalFor(rect),
+        ),
+        forced,
+      });
+
+      // Сохраняем результат в профиль (только внутри Telegram; уходят одни цифры).
+      const tier = tierFor(m.overall);
+      recordRating(m, tier.key, tier.label);
+
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(off, 0, 0, w, h);
+        drawSnapshotOverlay(ctx, lm, w, h, m);
+      }
+      setState('snapshot');
+    } catch (e) {
+      console.error(e);
+      setErrorMsg('Не получилось проанализировать снимок');
+      setState('error');
+    }
+  }, [ensureImageLandmarker, recordRating]);
+
+  // Автоспуск дёргает съёмку из тика, где takeSnapshot ещё не объявлен.
+  useEffect(() => {
+    takeSnapshotRef.current = (forced: boolean) => void takeSnapshot(forced);
+  }, [takeSnapshot]);
+
+  const retake = useCallback(() => {
+    setMetrics(null);
+    setShotQuality(null);
+    readySinceRef.current = 0;
+    notReadySinceRef.current = 0;
+    countdownStartRef.current = 0;
+    liveQualityRef.current = { pose: null, framing: null };
+    setStatusMsg(null);
+    setReady(false);
+    setCountdown(null);
+
+    if (!streamRef.current) {
+      start();
+      return;
+    }
+    const video = videoRef.current;
+    if (video) video.play();
+    setState('running');
+    rafRef.current = requestAnimationFrame(tick);
+  }, [start, tick]);
+
+  const handleClose = useCallback(() => {
+    stop();
+    setState('idle');
+    setFaceDetected(false);
+    setMetrics(null);
+    setShotQuality(null);
+    setShowEscape(false);
+    readySinceRef.current = 0;
+    notReadySinceRef.current = 0;
+    countdownStartRef.current = 0;
+    liveQualityRef.current = { pose: null, framing: null };
+    setStatusMsg(null);
+    setReady(false);
+    setCountdown(null);
+    onClose();
+  }, [stop, onClose]);
+
+  useEffect(() => {
+    return () => {
+      stop();
+      videoLandmarkerRef.current?.close();
+      videoLandmarkerRef.current = null;
+      imageLandmarkerRef.current?.close();
+      imageLandmarkerRef.current = null;
+    };
+  }, [stop]);
+
+  useEffect(() => {
+    if (!open) {
+      stop();
+      setState('idle');
+      setFaceDetected(false);
+      setMetrics(null);
+      setShotQuality(null);
+      setShowEscape(false);
+    readySinceRef.current = 0;
+    notReadySinceRef.current = 0;
+    countdownStartRef.current = 0;
+    liveQualityRef.current = { pose: null, framing: null };
+    setStatusMsg(null);
+    setReady(false);
+    setCountdown(null);
+    }
+  }, [open, stop]);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto"
+          onClick={handleClose}
+        >
+          <motion.div
+            initial={{ scale: 0.96, y: 10, opacity: 0 }}
+            animate={{ scale: 1, y: 0, opacity: 1 }}
+            exit={{ scale: 0.96, y: 10, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.2, 0.7, 0.2, 1] }}
+            className="relative glass-strong border border-white/15 rounded-2xl w-full max-w-3xl overflow-hidden my-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <div>
+                <div className="telemetry">Пробник · сетка лица</div>
+                <h3 className="text-lg font-semibold text-white mt-0.5">Бесплатный пробный анализ</h3>
+              </div>
+              <button onClick={handleClose} className="text-gray-400 hover:text-white p-1 -m-1" aria-label="close">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="relative aspect-[4/3] bg-black overflow-hidden">
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                className={`absolute inset-0 w-full h-full object-cover -scale-x-100 ${state === 'running' || state === 'analyzing' ? 'opacity-100' : 'opacity-0'}`}
+              />
+              <canvas
+                ref={canvasRef}
+                className={`absolute inset-0 w-full h-full object-cover ${state === 'running' || state === 'snapshot' ? 'opacity-100' : 'opacity-0'}`}
+              />
+
+              {state === 'running' && statusMsg && (
+                <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/90 text-black text-xs font-medium px-3 py-1.5 rounded-full text-center max-w-[80%]">
+                  {statusMsg}
+                </div>
+              )}
+
+              {state === 'running' && !statusMsg && ready && (
+                <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-emerald-400/90 text-black text-xs font-medium px-3 py-1.5 rounded-full">
+                  {countdown !== null ? `Снимаю… ${countdown}` : 'Готово — не двигайся'}
+                </div>
+              )}
+
+              {state === 'running' && (
+                <div className="absolute top-3 right-3 telemetry bg-black/50 px-2 py-1 rounded">
+                  В кадре · 478 точек
+                </div>
+              )}
+
+              {state === 'analyzing' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm">
+                  <Loader2 className="w-8 h-8 text-emerald-300 animate-spin mb-3" />
+                  <p className="text-white font-medium">Анализирую снимок…</p>
+                  <p className="telemetry mt-1">Разбор снимка</p>
+                </div>
+              )}
+
+              {state === 'snapshot' && (
+                <div className="absolute top-3 right-3 telemetry bg-black/60 px-2 py-1 rounded">
+                  Кадр разобран
+                </div>
+              )}
+
+              {state === 'idle' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6">
+                  <div className="icon-bubble mb-4"><Camera /></div>
+                  <h4 className="text-white font-semibold text-xl">Покажи лицо камере</h4>
+                  <p className="text-gray-400 text-sm mt-2 max-w-sm">
+                    Фото никуда не загружается — всё считается прямо в браузере. Хорошее освещение даст лучший результат.
+                  </p>
+                  <button onClick={start} className="mt-6 btn-primary px-6 py-3 rounded-xl font-medium inline-flex items-center gap-2">
+                    <Camera className="w-4 h-4" /> Включить камеру
+                  </button>
+                </div>
+              )}
+
+              {state === 'loading' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6">
+                  <Loader2 className="w-8 h-8 text-purple-300 animate-spin mb-3" />
+                  <p className="text-gray-300 text-sm">Загружаем модель…</p>
+                  <p className="telemetry mt-1">~5 МБ, один раз</p>
+                </div>
+              )}
+
+              {state === 'permission-denied' && (
+                <ErrorBlock title="Нет доступа к камере" desc="Разреши доступ в настройках браузера и обнови страницу." />
+              )}
+              {state === 'no-camera' && <ErrorBlock title="Камера не найдена" desc="Подключи камеру и попробуй снова." />}
+              {state === 'error' && <ErrorBlock title="Что-то пошло не так" desc={errorMsg || 'Попробуй ещё раз.'} />}
+            </div>
+
+            {state === 'snapshot' && metrics && <ResultPanel m={metrics} quality={shotQuality} />}
+
+            <div className={`px-5 py-4 border-t border-white/10 flex items-center justify-between gap-3${state === 'snapshot' ? ' hidden' : ''}`}>
+              <div className="text-xs text-gray-500 mono hidden sm:block">
+                {state === 'running' && faceDetected && '● слежу за лицом'}
+                {state === 'analyzing' && '◌ анализ'}
+                {state === 'loading' && '◌ загрузка'}
+              </div>
+              <div className="flex items-center gap-3 ml-auto">
+                {state === 'running' && showEscape && !ready && (
+                  <button
+                    onClick={() => takeSnapshot(true)}
+                    className="btn-ghost px-3 py-2.5 rounded-lg text-xs text-gray-400"
+                  >
+                    Снять как есть
+                  </button>
+                )}
+                {state === 'running' && (
+                  <button
+                    onClick={() => takeSnapshot(false)}
+                    disabled={!ready}
+                    className="btn-primary px-5 py-2.5 rounded-lg text-sm font-medium inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    {countdown !== null ? `Снимаю… ${countdown}` : 'Сделать снимок'}
+                  </button>
+                )}
+                {/* После снимка кнопок нет — только результат. «Заново» оставлено
+                    на ошибке: без него там тупик. */}
+                {state === 'error' && (
+                  <button onClick={retake} className="btn-ghost px-4 py-2.5 rounded-lg text-sm font-medium inline-flex items-center gap-2">
+                    <RotateCcw className="w-4 h-4" /> Заново
+                  </button>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/** Цвет вердикта по степени: от зелёного «идеально» до красного «экстремально». */
+const SEVERITY_TONE: Record<Severity, string> = {
+  0: 'text-emerald-400',
+  1: 'text-yellow-300',
+  2: 'text-amber-400',
+  3: 'text-orange-400',
+  4: 'text-red-400',
+  5: 'text-red-500 font-semibold',
+};
+
+/**
+ * Заглушки для закрытых значений. Специально постоянные и правдоподобные:
+ * в разметку под блюр не попадает ни одной настоящей цифры, так что
+ * «Просмотреть код» ничего не даст. Нужны, только когда включён пейволл.
+ */
+const LOCKED_PLACEHOLDER = { tier: '???', value: '1.23', verdict: 'Идеально' };
+
+function valueText(r: MetricResult): string {
+  if (r.sides) return `${formatValue(r.key, r.sides.left)} · ${formatValue(r.key, r.sides.right)}`;
+  return formatValue(r.key, r.value);
+}
+
+/**
+ * Строка таблицы. Слева название и вердикт — они длинные и переносятся,
+ * справа короткие замер и норма. Так на ширине телефона ничего не режется.
+ */
+function MetricRow({ r, locked }: { r: MetricResult; locked: boolean }) {
+  return (
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-0.5 px-3.5 py-2.5 items-baseline">
+      <div className="text-white text-sm font-medium flex items-center gap-1.5 min-w-0">
+        {locked && <Lock className="w-3 h-3 shrink-0 text-gray-400" />}
+        <span>{METRICS[r.key].label}</span>
+      </div>
+      <div className={`text-white mono text-sm text-right tnum whitespace-nowrap${locked ? ' locked-value' : ''}`}>
+        {locked ? LOCKED_PLACEHOLDER.value : valueText(r)}
+      </div>
+      <div className={`text-xs${locked ? ' locked-value text-gray-400' : ` ${SEVERITY_TONE[r.severity]}`}`}>
+        {locked ? LOCKED_PLACEHOLDER.verdict : verdictFor(r)}
+      </div>
+      <div className="text-gray-500 mono text-[11px] text-right whitespace-nowrap">
+        {r.sides ? 'лев · прав, ' : ''}норма {formatNorm(r.key)}
+      </div>
+    </li>
+  );
+}
+
+/** Тир, очки и раскладка по степеням. Под пейволлом — под блюром с кнопкой оплаты. */
+function TierCard({ m, locked }: { m: Metrics; locked: boolean }) {
+  const tier = tierFor(m.overall);
+
+  return (
+    <div className={locked ? 'pro-ring' : 'pro-ring pro-ring-muted'}>
+      <div className="rounded-[15px] bg-[#0b0b10] px-4 pt-4 pb-4 sm:px-5">
+        <div className="flex items-center justify-between">
+          <div className="telemetry">Итоговый тир</div>
+          {locked ? (
+            <span className="telemetry !text-[9px] px-2 py-0.5 rounded-full border border-white/15 inline-flex items-center gap-1">
+              <Lock className="w-2.5 h-2.5" /> Закрыто
+            </span>
+          ) : (
+            <span className="telemetry mono">
+              {m.points} из {m.maxPoints} очков
+            </span>
+          )}
+        </div>
+
+        <div className="relative text-center py-3 sm:py-4">
+          <div
+            className={`pro-text pro-glow font-display font-extrabold tracking-tight leading-none text-[88px] sm:text-[112px]${
+              locked ? ' locked-tier' : ''
+            }`}
+            aria-hidden={locked || undefined}
+          >
+            {locked ? LOCKED_PLACEHOLDER.tier : tier.short}
+          </div>
+          <div className="mt-2 text-sm text-gray-300 font-medium">
+            {locked ? 'Твой тир уже посчитан' : tier.label}
+          </div>
+        </div>
+
+        {!locked && (
+          <div className="flex flex-wrap justify-center gap-1.5">
+            {SEVERITIES.map((s, i) => (
+              <span
+                key={s.label}
+                className={`mono text-[11px] px-2 py-0.5 rounded-full border border-white/10 ${
+                  m.counts[i] ? SEVERITY_TONE[i as Severity] : 'text-gray-600'
+                }`}
+              >
+                {s.label} {m.counts[i]}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {locked && (
+          <div className="mt-4">
+            <UnlockButton />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Собирает человеческое объяснение, почему снимку стоит верить чуть меньше. */
+function qualityNote(q: ShotQuality | null): string | null {
+  if (!q) return null;
+  const parts: string[] = [];
+  if (q.pose?.reason) parts.push(q.pose.reason);
+  if (q.framing?.reason === 'far') parts.push('лицо было мелковато в кадре');
+  if (q.framing?.reason === 'near') parts.push('камера была слишком близко');
+  if (!parts.length) return null;
+  return parts.join(', ');
+}
+
+function ResultPanel({ m, quality }: { m: Metrics; quality: ShotQuality | null }) {
+  const { locked } = useProfile();
+  const isLocked = (k: MetricKey) => locked && LOCKED_METRICS.includes(k);
+  const weak = weakestOf(m);
+  const weakLocked = Boolean(weak && isLocked(weak.key));
+  const note = qualityNote(quality);
+
+  return (
+    <div className="px-5 py-5 border-t border-white/10 space-y-3">
+      <TierCard m={m} locked={locked} />
+
+      <div>
+        <div className="telemetry mb-2">Разбор по метрикам</div>
+        <ul className="glass rounded-xl border border-white/10 divide-y divide-white/5 overflow-hidden">
+          {METRIC_KEYS.map((k) => (
+            <MetricRow key={k} r={m.results[k]} locked={isLocked(k)} />
+          ))}
+        </ul>
+        <div className="text-[11px] text-gray-500 mono mt-2 leading-relaxed">
+          Очки: идеально +2, слегка +1, заметно 0, сильно −1, критично −2, экстремально −3.
+        </div>
+      </div>
+
+      {note && (
+        <div className="glass rounded-xl border border-amber-400/25 p-4">
+          <div className="telemetry mb-1">Точность снимка</div>
+          <div className="text-gray-400 text-xs leading-relaxed">
+            Похоже, {note} — из-за этого пропорции могли уехать. Переснимись анфас,
+            вписав лицо в овал, и цифры будут точнее.
+          </div>
+        </div>
+      )}
+
+      <div className="glass rounded-xl border border-amber-400/25 p-4">
+        <div className="telemetry mb-1 flex items-center gap-1">
+          {weakLocked && <Lock className="w-2.5 h-2.5" />} Слабая точка
+        </div>
+        {!weak ? (
+          <div className="text-gray-400 text-xs leading-relaxed">
+            Слабых мест нет — все метрики в норме. Эталон, брат, мог бы и не мерить.
+          </div>
+        ) : weakLocked ? (
+          <div className="text-gray-400 text-xs leading-relaxed">
+            Твоя слабая точка — среди закрытых метрик. Открой рейт выше, чтобы увидеть её и план, что с ней делать.
+          </div>
+        ) : (
+          <>
+            <div className="text-white font-semibold">{METRICS[weak.key].label}</div>
+            <div className={`text-xs mb-2 ${SEVERITY_TONE[weak.severity]}`}>{verdictFor(weak)}</div>
+            <div className="text-gray-400 text-xs leading-relaxed">{METRICS[weak.key].tip}</div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ErrorBlock({ title, desc }: { title: string; desc: string }) {
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6">
+      <div className="w-12 h-12 rounded-full bg-red-500/15 border border-red-400/30 flex items-center justify-center mb-3">
+        <AlertCircle className="w-6 h-6 text-red-300" />
+      </div>
+      <h4 className="text-white font-semibold">{title}</h4>
+      <p className="text-gray-400 text-sm mt-1 max-w-sm">{desc}</p>
+    </div>
+  );
+}

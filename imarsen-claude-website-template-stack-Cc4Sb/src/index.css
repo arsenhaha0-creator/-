@@ -1,0 +1,271 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --paper: #ffffff;
+    --ink: #000000;
+    --muted: #5b5b5b;
+    --line: rgba(0, 0, 0, 0.16);
+    --line-soft: rgba(0, 0, 0, 0.07);
+    --accent: #e11414;
+  }
+  html, body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'cv11', 'ss01', 'tnum';
+    overscroll-behavior: none;
+  }
+  html.tg-webapp body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  h1, h2, h3, h4, h5 {
+    font-family: 'Inter Tight', 'Inter', sans-serif;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }
+  ::selection { background: var(--ink); color: var(--paper); }
+}
+
+@layer components {
+  /* Swiss institute surfaces */
+  .surface {
+    background: #ffffff;
+    border: 1px solid var(--line);
+  }
+  .hairline { border-color: var(--line); }
+  .hairline-soft { border-color: var(--line-soft); }
+
+  .text-accent { color: var(--accent); }
+  .text-muted { color: var(--muted); }
+
+  /* Buttons — flat, editorial */
+  .btn-primary {
+    background: var(--ink);
+    color: var(--paper);
+    border: 1px solid var(--ink);
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+  .btn-primary:hover { background: #000; transform: translateY(-1px); }
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--ink);
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .btn-ghost:hover { background: rgba(0, 0, 0, 0.04); border-color: var(--ink); }
+
+  /* Medical mini-elements */
+  .med-plus { color: var(--accent); font-weight: 700; }
+  .live-dot {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent);
+  }
+  .live-dot::before {
+    content: ''; width: 6px; height: 6px; border-radius: 999px;
+    background: var(--accent);
+    box-shadow: 0 0 0 0 rgba(225, 20, 20, 0.5);
+    animation: pulse-dot 1.6s ease-out infinite;
+  }
+  @keyframes pulse-dot {
+    0% { box-shadow: 0 0 0 0 rgba(225, 20, 20, 0.5); }
+    70% { box-shadow: 0 0 0 7px rgba(225, 20, 20, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(225, 20, 20, 0); }
+  }
+
+  .icon-bubble {
+    width: 44px; height: 44px;
+    border-radius: 4px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: #ffffff;
+    border: 1px solid var(--line);
+    color: var(--ink);
+  }
+
+  /* Scientific eyebrow / labels */
+  .eyebrow {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .serif { font-family: 'Newsreader', Georgia, serif; }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  .section-index {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+  }
+}
+
+/* Feature / spec card */
+.feature-card {
+  position: relative;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1.5rem;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+.feature-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+
+.scroll-progress {
+  position: fixed; top: 0; left: 0;
+  height: 2px; width: 0;
+  background: var(--accent);
+  z-index: 60;
+  transition: width 0.1s linear;
+}
+
+.tilt { transform-style: preserve-3d; transition: transform 0.25s ease; will-change: transform; }
+.counter { font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+/* Faint engineering grid on the page background */
+.bg-grid {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(to right, var(--line-soft) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--line-soft) 1px, transparent 1px);
+  background-size: 96px 96px;
+  mask-image: radial-gradient(ellipse 100% 60% at 50% 0%, #000 20%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse 100% 60% at 50% 0%, #000 20%, transparent 80%);
+}
+
+/* Auto-marquee carousel (moves right→left, still swipeable) */
+.people-track {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 2px 0 6px;
+  cursor: grab;
+}
+.people-track:active { cursor: grabbing; }
+.people-track::-webkit-scrollbar { display: none; }
+
+.people-card {
+  flex: 0 0 200px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  user-select: none;
+}
+@media (min-width: 640px) { .people-card { flex-basis: 240px; } }
+
+.people-photo {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  background: #f2f2f2;
+}
+.people-photo img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  filter: grayscale(1) contrast(1.05);
+  pointer-events: none;
+}
+.people-photo::after {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(to top, #fff 0%, rgba(255,255,255,0.4) 12%, transparent 30%),
+    repeating-linear-gradient(0deg, transparent 0 21px, rgba(0,0,0,0.045) 21px 22px);
+  pointer-events: none;
+}
+/* red index tick — mini medical/dataset marker, no name/score */
+.people-idx {
+  position: absolute; bottom: 8px; left: 8px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.06em;
+  color: var(--accent);
+}
+.people-idx::before {
+  content: ''; display: inline-block;
+  width: 5px; height: 5px; margin-right: 5px;
+  background: var(--accent); vertical-align: middle;
+}
+
+/* keep .cut-corner utilities available if referenced elsewhere */
+.cut-corner { clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%); }
+
+/* Dark camera modal (TryDemo) — self-contained overlay, stays dark for video preview */
+.glass {
+  background: rgba(20, 20, 24, 0.55);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+.glass-strong {
+  background: rgba(14, 14, 18, 0.82);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+.telemetry {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: rgba(180, 180, 190, 0.75);
+  text-transform: uppercase;
+}
+
+/* --- Пейволл рейта (тёмная модалка результата и светлый профиль) --- */
+@property --pro-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+/* Рамка-градиент: внешний слой с padding 1px, внутри — непрозрачная карточка. */
+.pro-ring {
+  padding: 1px;
+  border-radius: 1rem;
+  background: conic-gradient(from var(--pro-angle), #f5b14c, #f0508c, #8b5cf6, #38bdf8, #f5b14c);
+  animation: pro-spin 7s linear infinite;
+}
+.pro-ring-muted { background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06)); animation: none; }
+@keyframes pro-spin { to { --pro-angle: 360deg; } }
+
+.pro-text {
+  background: linear-gradient(120deg, #ffe3a3 0%, #f7a1c4 45%, #b9a4ff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.pro-glow { text-shadow: 0 0 48px rgba(240, 80, 140, 0.35); }
+
+/* Заглушка под блюром. Настоящих цифр в разметке нет — только эти. */
+.locked-value { filter: blur(7px); user-select: none; pointer-events: none; }
+.locked-tier { filter: blur(14px); user-select: none; pointer-events: none; }
+
+.pro-btn {
+  position: relative;
+  overflow: hidden;
+  color: #0b0b0f;
+  background: linear-gradient(120deg, #ffd68a, #f7a1c4 50%, #b9a4ff);
+  box-shadow: 0 8px 28px -10px rgba(240, 80, 140, 0.65);
+}
+.pro-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,0.55) 50%, transparent 70%);
+  transform: translateX(-120%);
+  animation: pro-sheen 2.8s ease-in-out infinite;
+}
+@keyframes pro-sheen { 60%, 100% { transform: translateX(120%); } }
+.pro-btn:disabled { opacity: 0.6; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pro-ring, .pro-btn::after { animation: none; }
+}
